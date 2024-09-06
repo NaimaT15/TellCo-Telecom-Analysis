@@ -1,8 +1,8 @@
-## Welcome to TellCo-Telecom-User-Engagement-Analysis 👋
+## Welcome to TellCo-Telecom-Analysis 👋
 
 ## Description
 
-This repository, titled "TellCo-Telecom-User-Engagement-Analysis," provides a comprehensive toolkit for analyzing customer behavior and user engagement within a telecommunications network. The project focuses on aggregating and analyzing session data (xDR records) to uncover insights related to customer engagement, application usage, and traffic distribution. Key features include:
+This repository, titled "TellCo-Telecom-Analysis" provides a comprehensive toolkit for analyzing customer behavior and user engagement within a telecommunications network. The project focuses on aggregating and analyzing session data (xDR records) to uncover insights related to customer engagement, application usage, and traffic distribution. Key features include:
 
 - **User Engagement Analysis:** Aggregates data by user, examining session frequency, session duration, and total traffic (download and upload).
 
