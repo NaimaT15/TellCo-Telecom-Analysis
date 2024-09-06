@@ -1,4 +1,5 @@
 import os
+import warnings
 import psycopg2
 import pandas as pd
 import numpy as np
@@ -16,7 +17,8 @@ DB_NAME = os.getenv('DB_NAME')
 DB_USER = os.getenv('DB_USER')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 
-
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 def connect_to_db():
     """Establish a connection to the PostgreSQL database."""
     try:
