@@ -7,6 +7,7 @@ from scipy import stats
 from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 import seaborn as sns
+import warnings
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -20,6 +21,9 @@ DB_PASSWORD = os.getenv('DB_PASSWORD')
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 def connect_to_db():
     """Establish a connection to the PostgreSQL database."""
