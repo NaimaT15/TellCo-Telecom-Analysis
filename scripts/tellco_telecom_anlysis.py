@@ -1,6 +1,7 @@
 import os
 import warnings
 import psycopg2
+from sqlalchemy import create_engine
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -12,6 +13,8 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import OneHotEncoder
 import pandas as pd
+import numpy as np
+from sklearn.metrics.pairwise import euclidean_distances
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -606,3 +609,128 @@ def describe_clusters(df, clusters):
         print(f"  - Average Throughput: {row['avg_throughput']:.2f} kbps")
         print(f"  - Most Common Handset Type: {row['handset_type']}")
         print("\n")
+
+
+
+
+def assign_scores(user_data, engagement_centroids, experience_centroids):
+    """
+    Assign engagement and experience scores to users based on Euclidean distance from the least engaged
+    and worst experience clusters.
+    
+    Parameters:
+    - user_data: DataFrame containing the user metrics (e.g., engagement, experience metrics).
+    - engagement_centroids: Centroids of engagement clusters.
+    - experience_centroids: Centroids of experience clusters.
+    
+    Returns:
+    - DataFrame with engagement and experience scores.
+    """
+    
+    # Identify the index of the least engaged and worst experience clusters
+    least_engaged_cluster = np.argmin(np.sum(engagement_centroids, axis=1))
+    worst_experience_cluster = np.argmax(np.sum(experience_centroids, axis=1))
+    
+    # Initialize lists to store engagement and experience scores
+    engagement_scores = []
+    experience_scores = []
+    
+    # Iterate over each user and calculate the Euclidean distances
+    for i, row in user_data.iterrows():
+        # Extract the user's engagement and experience data
+        user_engagement_data = row[['session_frequency', 'total_session_duration', 'total_traffic']]
+        user_experience_data = row[['avg_tcp_retransmission', 'avg_rtt', 'avg_throughput']]
+        
+        # Calculate the engagement score (distance from least engaged cluster)
+        engagement_score = np.linalg.norm(user_engagement_data.values - engagement_centroids[least_engaged_cluster])
+        engagement_scores.append(engagement_score)
+        
+        # Calculate the experience score (distance from worst experience cluster)
+        experience_score = np.linalg.norm(user_experience_data.values - experience_centroids[worst_experience_cluster])
+        experience_scores.append(experience_score)
+    
+    # Assign the scores to the user data
+    user_data['engagement_score'] = engagement_scores
+    user_data['experience_score'] = experience_scores
+    
+    return user_data
+
+
+def calculate_satisfaction_score(user_data):
+    """
+    Calculate the satisfaction score as the average of the engagement and experience scores,
+    and return the top 10 satisfied users.
+    
+    Parameters:
+    - user_data: DataFrame containing user engagement and experience scores.
+    
+    Returns:
+    - DataFrame with the top 10 satisfied customers.
+    """
+    # Calculate the satisfaction score as the average of engagement and experience scores
+    user_data['satisfaction_score'] = (user_data['engagement_score'] + user_data['experience_score']) / 2
+    
+    # Sort the users by satisfaction score in descending order
+    top_10_satisfied_customers = user_data[['MSISDN/Number', 'satisfaction_score']].sort_values(
+        by='satisfaction_score', ascending=False).head(10)
+        
+    return top_10_satisfied_customers
+def run_kmeans_on_scores(user_scores, k=2):
+
+    # Extract the engagement and experience scores
+    score_data = user_scores[['engagement_score', 'experience_score']]
+    
+    # Standardize the scores
+    scaler = StandardScaler()
+    score_data_scaled = scaler.fit_transform(score_data)
+    
+    # Perform K-Means clustering
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    user_scores['cluster'] = kmeans.fit_predict(score_data_scaled)
+    
+    # Return the updated DataFrame with cluster labels
+    return user_scores, kmeans.cluster_centers_
+def aggregate_scores_per_cluster(user_scores):
+
+    # Group by the 'cluster' column and compute the average satisfaction and experience scores
+    cluster_aggregates = user_scores.groupby('cluster').agg(
+        avg_satisfaction_score=('satisfaction_score', 'mean'),
+        avg_experience_score=('experience_score', 'mean')
+    ).reset_index()
+    
+    return cluster_aggregates
+
+
+def create_postgres_engine():
+    """Create an SQLAlchemy engine for PostgreSQL."""
+    try:
+        engine = create_engine(f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
+        print("Connected to the PostgreSQL database successfully")
+        return engine
+    except Exception as e:
+        print(f"Error connecting to the PostgreSQL database: {e}")
+        return None
+
+# Function to export the DataFrame to PostgreSQL
+def export_to_postgres(user_scores):
+    """Export the DataFrame to the PostgreSQL database."""
+    engine = create_postgres_engine()
+    if engine:
+        try:
+            # Export the DataFrame to the PostgreSQL table 'user_scores'
+            user_scores.to_sql('user_scores', con=engine, if_exists='replace', index=False)
+            print("Data exported successfully to PostgreSQL database.")
+        except Exception as e:
+            print(f"Error exporting data: {e}")
+def fetch_exported_data():
+    """Fetch data from the PostgreSQL database to verify export."""
+    engine = create_postgres_engine()
+    if engine:
+        try:
+            query = "SELECT * FROM user_scores LIMIT 10;"
+            df = pd.read_sql(query, engine)
+            print(df)
+        except Exception as e:
+            print(f"Error fetching exported data: {e}")
+
+
