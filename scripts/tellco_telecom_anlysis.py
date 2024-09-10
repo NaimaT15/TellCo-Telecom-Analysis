@@ -1,6 +1,7 @@
 import os
 import warnings
 import psycopg2
+from sqlalchemy import create_engine
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -8,6 +9,12 @@ from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import OneHotEncoder
+import pandas as pd
+import numpy as np
+from sklearn.metrics.pairwise import euclidean_distances
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -393,5 +400,337 @@ def elbow_method(df):
     plt.ylabel('Inertia')
     plt.show()
 
-# Call the function to run the elbow method
+
+def top_bottom_frequent_values(df, column, n=10):
+    """
+    This function computes and returns the top, bottom, and most frequent values for a specified column.
+
+    :param df: DataFrame containing the data
+    :param column: The column name for which to compute the top, bottom, and frequent values
+    :param n: The number of values to return (default is 10)
+    :return: A dictionary containing top, bottom, and most frequent values
+    """
+    top_values = df[column].nlargest(n)
+    bottom_values = df[column].nsmallest(n)
+    most_frequent_values = df[column].value_counts().head(n)
+    
+    return {
+        'top_values': top_values,
+        'bottom_values': bottom_values,
+        'most_frequent_values': most_frequent_values
+    }
+
+def experience_analytics(df):
+    """
+    Perform user experience analysis based on network parameters.
+
+    :param df: DataFrame containing telecommunication data
+    :return: Aggregated DataFrame with average TCP retransmission, RTT, throughput, and handset type per customer.
+    """
+
+    # Treat missing values: Replace missing with mean (for numeric columns) and mode (for categorical columns)
+    df['TCP DL Retrans. Vol (Bytes)'].fillna(df['TCP DL Retrans. Vol (Bytes)'].mean(), inplace=True)
+    df['TCP UL Retrans. Vol (Bytes)'].fillna(df['TCP UL Retrans. Vol (Bytes)'].mean(), inplace=True)
+    df['Avg RTT DL (ms)'].fillna(df['Avg RTT DL (ms)'].mean(), inplace=True)
+    df['Avg RTT UL (ms)'].fillna(df['Avg RTT UL (ms)'].mean(), inplace=True)
+    df['Handset Type'].fillna(df['Handset Type'].mode()[0], inplace=True)
+    df['Avg Bearer TP DL (kbps)'].fillna(df['Avg Bearer TP DL (kbps)'].mean(), inplace=True)
+    df['Avg Bearer TP UL (kbps)'].fillna(df['Avg Bearer TP UL (kbps)'].mean(), inplace=True)
+
+    # Aggregate metrics per customer
+    experience_df = df.groupby('MSISDN/Number').agg(
+        avg_tcp_retransmission=('TCP DL Retrans. Vol (Bytes)', 'mean'),
+        avg_rtt=('Avg RTT DL (ms)', 'mean'),
+        avg_throughput=('Avg Bearer TP DL (kbps)', 'mean'),
+        handset_type=('Handset Type', lambda x: x.mode()[0])  # Mode is used to get the most common handset per customer
+    ).reset_index()
+
+    return experience_df
+
+def display_top_bottom_frequent(df):
+    """
+    This function computes and displays the top, bottom, and most frequent values for TCP, RTT, and Throughput.
+    
+    :param df: DataFrame containing telecommunication data
+    """
+
+    # Top, bottom, and most frequent TCP values
+    tcp_values = top_bottom_frequent_values(df, 'TCP DL Retrans. Vol (Bytes)')
+    print("TCP Retransmission Values:")
+    print(f"Top 10:\n{tcp_values['top_values']}")
+    print(f"Bottom 10:\n{tcp_values['bottom_values']}")
+    print(f"Most Frequent:\n{tcp_values['most_frequent_values']}\n")
+
+    # Top, bottom, and most frequent RTT values
+    rtt_values = top_bottom_frequent_values(df, 'Avg RTT DL (ms)')
+    print("RTT Values:")
+    print(f"Top 10:\n{rtt_values['top_values']}")
+    print(f"Bottom 10:\n{rtt_values['bottom_values']}")
+    print(f"Most Frequent:\n{rtt_values['most_frequent_values']}\n")
+
+    # Top, bottom, and most frequent Throughput values
+    throughput_values = top_bottom_frequent_values(df, 'Avg Bearer TP DL (kbps)')
+    print("Throughput Values:")
+    print(f"Top 10:\n{throughput_values['top_values']}")
+    print(f"Bottom 10:\n{throughput_values['bottom_values']}")
+    print(f"Most Frequent:\n{throughput_values['most_frequent_values']}\n")
+
+
+def throughput_tcp_per_handset(df):
+    """
+    Compute the distribution of average throughput and TCP retransmission per handset type.
+
+    :param df: DataFrame containing telecommunication data
+    :return: DataFrames with average throughput and TCP retransmission per handset type
+    """
+    # Calculate average throughput per handset type
+    throughput_per_handset = df.groupby('Handset Type').agg(
+        avg_throughput=('Avg Bearer TP DL (kbps)', 'mean')
+    ).reset_index()
+
+    # Calculate average TCP retransmission per handset type
+    tcp_per_handset = df.groupby('Handset Type').agg(
+        avg_tcp_retransmission=('TCP DL Retrans. Vol (Bytes)', 'mean')
+    ).reset_index()
+
+    return throughput_per_handset, tcp_per_handset
+
+def plot_distributions(throughput_df, tcp_df):
+    """
+    Plot the distribution of average throughput and TCP retransmission per handset type.
+
+    :param throughput_df: DataFrame containing average throughput per handset type
+    :param tcp_df: DataFrame containing average TCP retransmission per handset type
+    """
+
+    # Plot throughput distribution
+    plt.figure(figsize=(10, 6))
+    sns.histplot(throughput_df['avg_throughput'], bins=30, kde=True)
+    plt.title('Distribution of Average Throughput per Handset Type')
+    plt.xlabel('Average Throughput (kbps)')
+    plt.ylabel('Frequency')
+    plt.show()
+
+    # Plot TCP retransmission distribution
+    plt.figure(figsize=(10, 6))
+    sns.histplot(tcp_df['avg_tcp_retransmission'], bins=30, kde=True)
+    plt.title('Distribution of Average TCP Retransmission per Handset Type')
+    plt.xlabel('Average TCP Retransmission (Bytes)')
+    plt.ylabel('Frequency')
+    plt.show()
+
+def report_throughput_tcp(throughput_df, tcp_df):
+    """
+    Print the interpretation of the findings for average throughput and TCP retransmission per handset type.
+
+    :param throughput_df: DataFrame containing average throughput per handset type
+    :param tcp_df: DataFrame containing average TCP retransmission per handset type
+    """
+    # Interpret the throughput findings
+    print("Interpretation of Average Throughput per Handset Type:")
+    top_throughput_handset = throughput_df.nlargest(1, 'avg_throughput')
+    low_throughput_handset = throughput_df.nsmallest(1, 'avg_throughput')
+    print(f"Handset Type with the highest average throughput: {top_throughput_handset.iloc[0]['Handset Type']} ({top_throughput_handset.iloc[0]['avg_throughput']} kbps)")
+    print(f"Handset Type with the lowest average throughput: {low_throughput_handset.iloc[0]['Handset Type']} ({low_throughput_handset.iloc[0]['avg_throughput']} kbps)\n")
+
+    # Interpret the TCP retransmission findings
+    print("Interpretation of Average TCP Retransmission per Handset Type:")
+    top_tcp_handset = tcp_df.nlargest(1, 'avg_tcp_retransmission')
+    low_tcp_handset = tcp_df.nsmallest(1, 'avg_tcp_retransmission')
+    print(f"Handset Type with the highest average TCP retransmission: {top_tcp_handset.iloc[0]['Handset Type']} ({top_tcp_handset.iloc[0]['avg_tcp_retransmission']} Bytes)")
+    print(f"Handset Type with the lowest average TCP retransmission: {low_tcp_handset.iloc[0]['Handset Type']} ({low_tcp_handset.iloc[0]['avg_tcp_retransmission']} Bytes)")
+
+
+def preprocess_data_for_clustering(df):
+    """
+    Preprocess the data for k-means clustering: 
+    - Normalize numeric experience metrics (TCP retransmission, RTT, throughput)
+    - One-hot encode the handset type
+    """
+    # Select relevant experience metrics
+    experience_metrics = df[['avg_tcp_retransmission', 'avg_rtt', 'avg_throughput', 'handset_type']].copy()
+    
+    # Normalize the numeric columns (TCP, RTT, throughput)
+    scaler = StandardScaler()
+    experience_metrics.loc[:, ['avg_tcp_retransmission', 'avg_rtt', 'avg_throughput']] = scaler.fit_transform(
+        experience_metrics[['avg_tcp_retransmission', 'avg_rtt', 'avg_throughput']]
+    )
+    
+    # One-hot encode the handset type
+    encoder = OneHotEncoder()
+    handset_encoded = pd.DataFrame(encoder.fit_transform(experience_metrics[['handset_type']]).toarray(), index=experience_metrics.index)
+    
+    # Merge the encoded handset data with the normalized metrics
+    experience_metrics = experience_metrics.drop('handset_type', axis=1)
+    experience_metrics = pd.concat([experience_metrics, handset_encoded], axis=1)
+    
+    # Ensure all column names are strings
+    experience_metrics.columns = experience_metrics.columns.astype(str)
+    
+    return experience_metrics
+
+
+
+def perform_kmeans_clustering(df, k=3):
+    """
+    Perform K-Means clustering on the preprocessed data.
+    
+    :param df: Preprocessed DataFrame containing normalized experience metrics and one-hot encoded handset type
+    :param k: Number of clusters for K-Means (default is 3)
+    :return: Cluster labels for each user
+    """
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    clusters = kmeans.fit_predict(df)
+    
+    return clusters
+
+def describe_clusters(df, clusters):
+    """
+    Provide a brief description of each cluster based on the experience metrics.
+    
+    :param df: Original DataFrame containing experience metrics
+    :param clusters: Cluster labels for each user
+    """
+    df['cluster'] = clusters
+    
+    # Group by cluster and compute descriptive statistics for each cluster
+    cluster_summary = df.groupby('cluster').agg(
+        avg_tcp_retransmission=('avg_tcp_retransmission', 'mean'),
+        avg_rtt=('avg_rtt', 'mean'),
+        avg_throughput=('avg_throughput', 'mean'),
+        handset_type=('handset_type', lambda x: x.mode()[0])  # Most frequent handset type
+    ).reset_index()
+    
+    # Display the cluster descriptions
+    for idx, row in cluster_summary.iterrows():
+        print(f"Cluster {row['cluster']} Description:")
+        print(f"  - Average TCP Retransmission: {row['avg_tcp_retransmission']:.2f}")
+        print(f"  - Average RTT: {row['avg_rtt']:.2f} ms")
+        print(f"  - Average Throughput: {row['avg_throughput']:.2f} kbps")
+        print(f"  - Most Common Handset Type: {row['handset_type']}")
+        print("\n")
+
+
+
+
+def assign_scores(user_data, engagement_centroids, experience_centroids):
+    """
+    Assign engagement and experience scores to users based on Euclidean distance from the least engaged
+    and worst experience clusters.
+    
+    Parameters:
+    - user_data: DataFrame containing the user metrics (e.g., engagement, experience metrics).
+    - engagement_centroids: Centroids of engagement clusters.
+    - experience_centroids: Centroids of experience clusters.
+    
+    Returns:
+    - DataFrame with engagement and experience scores.
+    """
+    
+    # Identify the index of the least engaged and worst experience clusters
+    least_engaged_cluster = np.argmin(np.sum(engagement_centroids, axis=1))
+    worst_experience_cluster = np.argmax(np.sum(experience_centroids, axis=1))
+    
+    # Initialize lists to store engagement and experience scores
+    engagement_scores = []
+    experience_scores = []
+    
+    # Iterate over each user and calculate the Euclidean distances
+    for i, row in user_data.iterrows():
+        # Extract the user's engagement and experience data
+        user_engagement_data = row[['session_frequency', 'total_session_duration', 'total_traffic']]
+        user_experience_data = row[['avg_tcp_retransmission', 'avg_rtt', 'avg_throughput']]
+        
+        # Calculate the engagement score (distance from least engaged cluster)
+        engagement_score = np.linalg.norm(user_engagement_data.values - engagement_centroids[least_engaged_cluster])
+        engagement_scores.append(engagement_score)
+        
+        # Calculate the experience score (distance from worst experience cluster)
+        experience_score = np.linalg.norm(user_experience_data.values - experience_centroids[worst_experience_cluster])
+        experience_scores.append(experience_score)
+    
+    # Assign the scores to the user data
+    user_data['engagement_score'] = engagement_scores
+    user_data['experience_score'] = experience_scores
+    
+    return user_data
+
+
+def calculate_satisfaction_score(user_data):
+    """
+    Calculate the satisfaction score as the average of the engagement and experience scores,
+    and return the top 10 satisfied users.
+    
+    Parameters:
+    - user_data: DataFrame containing user engagement and experience scores.
+    
+    Returns:
+    - DataFrame with the top 10 satisfied customers.
+    """
+    # Calculate the satisfaction score as the average of engagement and experience scores
+    user_data['satisfaction_score'] = (user_data['engagement_score'] + user_data['experience_score']) / 2
+    
+    # Sort the users by satisfaction score in descending order
+    top_10_satisfied_customers = user_data[['MSISDN/Number', 'satisfaction_score']].sort_values(
+        by='satisfaction_score', ascending=False).head(10)
+        
+    return top_10_satisfied_customers
+def run_kmeans_on_scores(user_scores, k=2):
+
+    # Extract the engagement and experience scores
+    score_data = user_scores[['engagement_score', 'experience_score']]
+    
+    # Standardize the scores
+    scaler = StandardScaler()
+    score_data_scaled = scaler.fit_transform(score_data)
+    
+    # Perform K-Means clustering
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    user_scores['cluster'] = kmeans.fit_predict(score_data_scaled)
+    
+    # Return the updated DataFrame with cluster labels
+    return user_scores, kmeans.cluster_centers_
+def aggregate_scores_per_cluster(user_scores):
+
+    # Group by the 'cluster' column and compute the average satisfaction and experience scores
+    cluster_aggregates = user_scores.groupby('cluster').agg(
+        avg_satisfaction_score=('satisfaction_score', 'mean'),
+        avg_experience_score=('experience_score', 'mean')
+    ).reset_index()
+    
+    return cluster_aggregates
+
+
+def create_postgres_engine():
+    """Create an SQLAlchemy engine for PostgreSQL."""
+    try:
+        engine = create_engine(f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
+        print("Connected to the PostgreSQL database successfully")
+        return engine
+    except Exception as e:
+        print(f"Error connecting to the PostgreSQL database: {e}")
+        return None
+
+# Function to export the DataFrame to PostgreSQL
+def export_to_postgres(user_scores):
+    """Export the DataFrame to the PostgreSQL database."""
+    engine = create_postgres_engine()
+    if engine:
+        try:
+            # Export the DataFrame to the PostgreSQL table 'user_scores'
+            user_scores.to_sql('user_scores', con=engine, if_exists='replace', index=False)
+            print("Data exported successfully to PostgreSQL database.")
+        except Exception as e:
+            print(f"Error exporting data: {e}")
+def fetch_exported_data():
+    """Fetch data from the PostgreSQL database to verify export."""
+    engine = create_postgres_engine()
+    if engine:
+        try:
+            query = "SELECT * FROM user_scores LIMIT 10;"
+            df = pd.read_sql(query, engine)
+            print(df)
+        except Exception as e:
+            print(f"Error fetching exported data: {e}")
+
 
